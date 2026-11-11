@@ -1,0 +1,17 @@
+{
+  "unirtos_root": "",
+  "build": {
+    "module": "EG800ZCN_LA"
+  },
+  "sdk": {
+    "version": "1.0.4-voip.1"
+  },
+  "libraries": {
+    "list": [
+      {
+        "name": "unirtos-voip",
+        "version": "1.0.1"
+      }
+    ]
+  }
+}

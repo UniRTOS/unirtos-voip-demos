@@ -1,0 +1,49 @@
+; Test-only reference. Merge into the server configuration after filling passwords.
+; This variant assumes the server IPv4 is directly reachable by SIM and PC.
+[transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:5060
+; If the server itself is behind NAT, configure actual values and UDP forwarding:
+; external_signaling_address=SERVER_PUBLIC_IPV4
+; external_media_address=SERVER_PUBLIC_IPV4
+; local_net=SERVER_REAL_PRIVATE_SUBNET/CIDR
+
+[voip-demo-endpoint](!)
+type=endpoint
+transport=transport-udp
+context=voip-demo
+disallow=all
+allow=alaw
+direct_media=no
+rtp_symmetric=yes
+force_rport=yes
+rewrite_contact=yes
+dtmf_mode=rfc4733
+ice_support=no
+
+[1001](voip-demo-endpoint)
+auth=1001-auth
+aors=1001
+[1001-auth]
+type=auth
+auth_type=userpass
+username=1001
+password=REPLACE_BOARD_A_PASSWORD
+[1001]
+type=aor
+max_contacts=1
+remove_existing=yes
+
+[1002](voip-demo-endpoint)
+auth=1002-auth
+aors=1002
+[1002-auth]
+type=auth
+auth_type=userpass
+username=1002
+password=REPLACE_PC_OR_BOARD_B_PASSWORD
+[1002]
+type=aor
+max_contacts=1
+remove_existing=yes
