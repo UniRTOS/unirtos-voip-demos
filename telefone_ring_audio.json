@@ -1,0 +1,23 @@
+{
+  "source_name": "telefone_ring.mp3",
+  "source_sha256": "2fb62833d68898b4c4c8475316c227115b22338fc8dc32492358a70f090a17fe",
+  "source_bytes": 257462,
+  "source_rate": 44100,
+  "source_channels": 2,
+  "decoded_duration_seconds": 8.04575,
+  "output_rate": 16000,
+  "channels": 1,
+  "pcm_bits": 16,
+  "cycle_samples": 32000,
+  "cycle_seconds": 2,
+  "stored_samples": 20800,
+  "stored_bytes": 20800,
+  "storage": "G.711 mu-law companding at 16000 samples/s; decode to PCM locally; unrelated to SIP codec",
+  "implicit_zero_tail_samples": 11200,
+  "asset_sha256": "44f320fd7dee1cdfb6b78291886c99bd3f6ec96e9ef5b9be3478dbf2fdd0ed5a",
+  "gain50_pcm_sha256": "0cca8db70807aedb6676b1ef20e0fbadddff161e055c144d63f01d2e11e3ec61",
+  "gain100_pcm_sha256": "3dc6b758fc3dabfb185826b548153630ea1bb2a429b597283b687c37cd2ee4c2",
+  "gain50_peak": 9918,
+  "companding_snr_db": 34.673,
+  "notes": "Original recording, first complete cycle repeated; no pitch/time change or synthetic replacement. Mono/resampling and companding are lossy."
+}
