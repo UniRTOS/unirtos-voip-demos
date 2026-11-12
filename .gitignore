@@ -1,6 +1,15 @@
+# Build/cache output belongs to the consuming application, never the release source.
 qos_build/
 build/
 .unirtos*
 *.log
 __pycache__/
 .vscode/
+*.code-workspace
+*.o
+*.obj
+*.elf
+*.map
+*.hbinpkg
+*.zip
+*.7z

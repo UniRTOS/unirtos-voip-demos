@@ -4,7 +4,7 @@
     "module": "EG800ZCN_LA"
   },
   "sdk": {
-    "version": "1.0.4-voip.1"
+    "version": "1.0.5"
   },
   "libraries": {
     "list": [

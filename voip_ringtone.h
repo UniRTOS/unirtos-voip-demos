@@ -9,7 +9,7 @@
 /** @brief 按当前来电状态维护原始 PCM 响铃。
  * @param[in] const qcm_voip_status_t *status 当前状态快照。
  * @param[in] bool allowed 板级可用且 SIP 已启动。
- * @return 无；失败写 debug 日志，不改变通话状态。
+ * @return 无；写入失败或超时会停止本次响铃，不改变 SIP 通话状态。
  */
 void voip_ringtone_poll(const qcm_voip_status_t *status, bool allowed);
 /** @brief 停止响铃并释放播放流；必须成功后才能接听或打开其他音频。
