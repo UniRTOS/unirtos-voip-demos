@@ -8,10 +8,13 @@
 #include "qosa_dev_eigen.h"
 #include "qosa_sys.h"
 #include "qosa_gpio.h"
+#include "qosa_network.h"
+#include "qosa_sim.h"
 #include "qosa_pinctrl.h"
 #include "qosa_iic.h"
 #include "qosa_audio.h"
 #include "qosa_rtc.h"
+#include "qcm_voip_platform.h"
 
 /** @struct voip_key_t
  * @brief 单个按键的 GPIO 映射和独立消抖状态，仅由 IO 任务访问。
@@ -26,7 +29,13 @@ static voip_key_t g_keys[2] = {
     {.previous = 1, .stable = 1},
     {.previous = 1, .stable = 1}
 };
-static qosa_pin_cfg_t g_led_reg, g_led_call, g_pa;
+static qosa_pin_cfg_t g_led_net, g_led_reg, g_led_call, g_pa;
+/* D2: EVB 原理图 NETLIGHT -> 模组 Pin16 -> GPIO25，Q3 高电平点亮。
+ * 官方 v1.0.5 底包未启用平台 LED 服务；这里只用公开接口，不改 SDK 或底包。
+ * 以下网络灯状态仅由 IO 任务读写。 */
+static bool g_net_polled, g_net_registered, g_net_media_seen;
+static unsigned g_net_poll_at, g_net_media_at;
+static uint32_t g_net_tx, g_net_rx;
 static bool g_io_ready, g_codec_ready, g_local_playback;
 static unsigned char g_codec_address;
 static int g_io_error;
@@ -63,7 +72,7 @@ static int voip_setup_pin(unsigned pin, qosa_pin_cfg_t *cfg, bool input)
                          input ? QOSA_GPIO_PULL_UP : QOSA_GPIO_PULL_NONE, QOSA_GPIO_LEVEL_LOW);
 }
 
-/** @brief 初始化 D3、D4、S2/S3 和功放控制，功放默认关闭。
+/** @brief 初始化 D2/D3/D4、S2/S3 和功放控制，功放默认关闭。
  * @return 0 成功，其余为引脚初始化错误。
  */
 int voip_board_init(void)
@@ -75,7 +84,28 @@ int voip_board_init(void)
     if ((ret = voip_setup_pin(50, &g_keys[0].pin, true))) return ret;
     if ((ret = voip_setup_pin(51, &g_keys[1].pin, true))) return ret;
     if ((ret = voip_setup_pin(54, &g_pa, false))) return ret;
+    if ((ret = voip_setup_pin(16, &g_led_net, false))) return ret;
     g_io_ready = true;
+    return 0;
+}
+
+/** @brief 配置 SIM1 卡座检测，让无卡开机后插卡可通知底层重新识卡。
+ * @return 0 为配置成功；-41 为读回不匹配；其余为 SDK SIM 接口错误。
+ * @note EVB SIM_DET 实际连接模组 Pin79；使用平台专用检测引脚，不改成普通 GPIO。
+ *       EC718 setter 会比较 NV，仅在配置变化时写入；失败后允许控制任务重试。
+ */
+int voip_board_sim_init(void)
+{
+    qosa_sim_hot_swap_cfg_t desired = {0}, actual = {0};
+    int ret;
+    desired.enable = VOIP_DEMO_SIM_HOT_SWAP ? QOSA_TRUE : QOSA_FALSE;
+    desired.insert_level = (qosa_sim_insert_level_e)VOIP_DEMO_SIM_INSERT_LEVEL;
+    desired.gpio = QOSA_SIM_HOT_SWAP_UNSPECIFIED_GPIO;
+    ret = qosa_sim_set_sim_hot_swap(0, &desired);
+    if (ret) return ret;
+    ret = qosa_sim_get_sim_hot_swap(0, &actual);
+    if (ret) return ret;
+    if (actual.enable != desired.enable || actual.insert_level != desired.insert_level) return -41;
     return 0;
 }
 
@@ -108,7 +138,7 @@ int voip_board_audio_init(void)
     if (g_codec_ready) return 0;
     if (!g_io_ready) return -1;
     // 保留经板测验证的启动延时；公开接口同时切换 Normal/AON IO 电压。
-    qosa_uint32_t uptime = qosa_get_running_time();
+    qosa_uint32_t uptime = qcm_voip_uptime_ms();
     if (uptime < 5000) qosa_task_sleep_ms(5000 - uptime);
     if ((ret = qosa_aud_output_ctrl(QOSA_AUDIO_OUTPUT_EXTERNAL, &timing))) return ret;
     if ((ret = qosa_gpio_set_voltage(VOL_3_30V))) return ret;
@@ -170,13 +200,46 @@ static void voip_pin_write(qosa_pin_cfg_t *pin, bool level)
     }
 }
 
-/** @brief 根据 SIP 快照更新注册灯、通话灯和功放。
+/** @brief 用公开接口补齐官方 SDK 底包未启用的 D2 网络灯。
+ * @param[in] const qcm_voip_status_t *status 只读取 RTP 计数，不用 SIP 注册状态代替蜂窝注册。
+ * @param[in] unsigned now 单调毫秒计时，允许 32 位回绕。
+ * @note 由现有 IO 任务调用；每秒读取一次 SIM0 的 PS 域缓存，不发 AT、不等待驻网。
+ *       未驻网亮 200/2000 ms，已驻网亮 1800/2000 ms，最近 1 s 有 RTP 收发时亮 125/250 ms。
+ */
+static void voip_net_led_update(const qcm_voip_status_t *status, unsigned now)
+{
+    unsigned period = 2000U, on_ms = 200U;
+    if (!g_net_polled || (unsigned)(now - g_net_poll_at) >= 1000U) {
+        qosa_uint8_t ps = QOSA_NW_REG_UNKNOWN;
+        int ret = qosa_nw_get_reg_status(0, NULL, &ps);
+        g_net_registered = !ret && QOSA_NW_ATTACHED(ps);
+        g_net_poll_at = now;
+        g_net_polled = true;
+    }
+    if (status->tx_packets != g_net_tx || status->rx_packets != g_net_rx) {
+        g_net_media_at = now;
+        g_net_media_seen = true;
+    }
+    g_net_tx = status->tx_packets;
+    g_net_rx = status->rx_packets;
+    if (!g_net_registered) g_net_media_seen = false;
+    if (g_net_registered) {
+        on_ms = 1800U;
+        if (g_net_media_seen && (unsigned)(now - g_net_media_at) < 1000U) {
+            period = 250U;
+            on_ms = 125U;
+        }
+    }
+    voip_pin_write(&g_led_net, now % period < on_ms);
+}
+
+/** @brief 更新 D2 网络灯，并根据 SIP 快照更新 D3/D4 和功放。
  * @param[in] const qcm_voip_status_t *status SIP 状态快照。
  * @param[in] bool started true 表示已经开始注册或 SIP 服务在运行。
  */
 void voip_board_update(const qcm_voip_status_t *status, bool started)
 {
-    unsigned now = qosa_get_running_time();
+    unsigned now = qcm_voip_uptime_ms();
     bool audio_ready, local_playback;
     bool incoming, connected, dialing;
     if (!g_io_ready || !status) return;
@@ -187,6 +250,7 @@ void voip_board_update(const qcm_voip_status_t *status, bool started)
     audio_ready = g_codec_ready;
     local_playback = g_local_playback;
     qosa_exit_critical();
+    voip_net_led_update(status, now);
     voip_pin_write(&g_led_reg, status->registered || (started && (now / 500U) % 2U));
     voip_pin_write(&g_led_call, connected || ((incoming || dialing) && (now / 150U) % 2U));
     // J13 短接 1-2 时由 Pin54 控制；短接 2-3 会硬件常开。

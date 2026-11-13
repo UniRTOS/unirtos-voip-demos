@@ -2,6 +2,8 @@
 #define VOIP_BOARD_H
 #include "qcm_voip.h"
 int voip_board_init(void);
+/** @brief 配置 SIM1/模组 Pin79 热插拔检测；仅控制任务调用，0 成功，其余为错误码。 */
+int voip_board_sim_init(void);
 int voip_board_audio_init(void);
 void voip_board_update(const qcm_voip_status_t *status, bool started);
 /** @enum voip_board_key_e

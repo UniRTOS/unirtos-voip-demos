@@ -8,6 +8,8 @@
 #include "voip_board.h"
 #include "qosa_sys.h"
 #include "qosa_rtc.h"
+#include "qcm_voip_platform.h"
+#include "qcm_voip_tone_volume.h"
 #include "qcm_audio.h"
 
 /** 每帧 320 个 16 位样本，对应 20 ms。 */
@@ -16,14 +18,12 @@
 #define RING_CYCLE_SAMPLES 32000U
 /** 原录音经单声道/16 kHz 转换后的 mu-law 资源；末尾解码为零的样本省略存储。 */
 static const uint8_t ring_audio[] = {
-#include "telefone_ring_ulaw.inc"
+#include "assets/telefone_ring_ulaw.inc"
 };
 static qosa_aud_handle_t ring_handle; /**< 控制任务独占，关闭失败保留以便重试。 */
 static int16_t ring_frame[RING_SAMPLES]; /**< 可写帧，底层可原地调整音量。 */
 static unsigned ring_offset, ring_position, ring_call;
 static uint32_t ring_due, ring_progress, ring_retry;
-static uintptr_t ring_generation, ring_active; /**< 仅事件回调与任务共享，在临界区内访问。 */
-static bool ring_event_failed; /**< 迟到回调按 generation 隔离。 */
 static bool ring_seen, ring_blocked, ring_playing;
 
 /** @brief 解压一份原铃声样本并调整数字幅度，静音段直接补零。
@@ -39,21 +39,8 @@ static int16_t ring_sample(unsigned position)
     code = (unsigned)(~ring_audio[position]) & 255U;
     sample = (int32_t)(((code & 15U) << 3) + 132U) << ((code >> 4) & 7U);
     sample = (code & 128U) ? 132 - sample : sample - 132;
-    return (int16_t)(sample * VOIP_DEMO_RING_GAIN / 100);
-}
-
-/** @brief 只记录当前响铃流的错误或意外结束，不从音频回调关闭流。
- * @param[in] qosa_aud_cb_param_t *event 音频事件及创建时的不透明代号。
- * @return 无。
- */
-static void ring_event(qosa_aud_cb_param_t *event)
-{
-    if (!event) return;
-    qosa_enter_critical();
-    if (ring_active && ring_active == (uintptr_t)event->ctx &&
-        (event->event_id == QOSA_AUD_EVT_PLAY_ERR || event->event_id == QOSA_AUD_EVT_PLAY_DONE))
-        ring_event_failed = true;
-    qosa_exit_critical();
+    return qcm_voip_tone_sample((int16_t)(sample * VOIP_DEMO_RING_GAIN / 100),
+                                VOIP_DEMO_RING_VOLUME);
 }
 
 /** @brief 先关闭本地 PA 标志再关闭响铃流；关闭失败保留句柄并阻止接听。
@@ -63,7 +50,6 @@ static void ring_event(qosa_aud_cb_param_t *event)
 int voip_ringtone_stop(bool inhibit)
 {
     if (inhibit) ring_blocked = true;
-    qosa_enter_critical(); ring_active = 0; qosa_exit_critical();
     if (ring_playing) {
         voip_board_audio_output(false);
         ring_playing = false;
@@ -85,25 +71,21 @@ static int ring_open(void)
     qosa_aud_stream_cfg_t cfg = {0};
     int ret = voip_board_audio_init();
     if (ret) return ret;
-    ret = qosa_aud_set_volume((qosa_aud_vol_level_e)VOIP_DEMO_RING_VOLUME);
+    /* 档位已作用于 PCM 样本；底层保持原幅度，避免与通话全局音量叠加。 */
+    ret = qosa_aud_set_volume(QOSA_AUD_VOLUME_LEVEL_6);
     if (ret) return ret;
     cfg.samprate = 16000;
     cfg.channels = 1;
     cfg.format = QOSA_AUD_FMT_PCM;
-    cfg.route = QOSA_AUD_ROUTE_NEAR;
+    /* PCM uses the local route in the official SDK. */
     cfg.sync_mode = false;
-    cfg.callback = ring_event;
-    qosa_enter_critical();
-    if (++ring_generation == 0) ++ring_generation;
-    ring_active = ring_generation;
-    ring_event_failed = false;
-    qosa_exit_critical();
-    cfg.ctx = (uint8_t *)ring_generation;
+    /* 官方 SDK 的旧音频归档不保证回调 ctx 透传。保持 callback/ctx 为零，
+     * 由同一控制任务检查 write 返回值和 200 ms 写入进度，避免迟到回调污染新来电。 */
     ret = qcm_aud_stream_open(&cfg, &ring_handle);
     if (ret) return ret;
     ring_position = 0;
     ring_offset = sizeof(ring_frame);
-    ring_progress = qosa_get_running_time();
+    ring_progress = qcm_voip_uptime_ms();
     ring_retry = ring_progress;
     ring_due = ring_progress - 60U;
     ring_playing = true;
@@ -119,8 +101,8 @@ static int ring_open(void)
  */
 void voip_ringtone_poll(const qcm_voip_status_t *status, bool allowed)
 {
-    bool incoming, failed;
-    uint32_t now = qosa_get_running_time();
+    bool incoming;
+    uint32_t now = qcm_voip_uptime_ms();
     unsigned attempt;
     int ret = 0;
     if (!status) return;
@@ -146,8 +128,6 @@ void voip_ringtone_poll(const qcm_voip_status_t *status, bool allowed)
         return;
     }
     if (!ring_handle && (ret = ring_open())) goto error;
-    qosa_enter_critical(); failed = ring_event_failed; qosa_exit_critical();
-    if (failed) { ret = -5; goto error; }
     for (attempt = 0; attempt < 4U; ++attempt) {
         unsigned i;
         int written;

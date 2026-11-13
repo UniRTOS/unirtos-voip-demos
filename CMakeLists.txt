@@ -22,6 +22,7 @@ unset(voip_placeholder_lines)
 add_library(${target} STATIC
     voip_demo_entry.c
     voip_demo.c
+    voip_sim.c
     voip_ringtone.c
     boards/eg800z_quecduino/voip_board.c
 )
@@ -35,7 +36,7 @@ target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/boards/eg800z_quecduino
 )
-target_link_libraries(${target} PRIVATE unirtos-voip qcm_audio)
+target_link_libraries(${target} PRIVATE unirtos-voip)
 if(CONFIG_QOSA_LINK_SYSTEM_LIBRARIES_FUNC)
     target_link_libraries(${target} PRIVATE system_os)
 endif()

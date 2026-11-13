@@ -1,0 +1,10 @@
+; Internal two-party test only. No external calling route.
+; 回铃/通话独立音量要求：振铃时 180/183，被叫接听后才向主叫返回 200。
+; 不要在下面的 Dial 前执行 Answer；否则主叫提前进入通话档位。
+; 若需要网络回铃，服务器须提供接通前 SDP/RTP；仅 180 无 SDP 不产生本地回铃。
+; 此处是参考分机路由，不能代表实际服务器的队列、IVR 或桥接配置。
+[voip-demo]
+exten => 1001,1,Dial(PJSIP/1001,60)
+ same => n,Hangup()
+exten => 1002,1,Dial(PJSIP/1002,60)
+ same => n,Hangup()

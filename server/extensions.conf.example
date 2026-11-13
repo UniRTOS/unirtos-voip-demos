@@ -1,6 +1,0 @@
-; Internal two-party test only. No external calling route.
-[voip-demo]
-exten => 1001,1,Dial(PJSIP/1001,60)
- same => n,Hangup()
-exten => 1002,1,Dial(PJSIP/1002,60)
- same => n,Hangup()
